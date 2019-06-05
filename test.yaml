@@ -1,0 +1,10 @@
+processes:
+  - name: first
+    command: sleep
+    arguments:
+      - 3
+  - name: second
+    command: 'yes'
+    arguments: 
+      - '{"foo": "bar"}'
+    parse_into: ""
