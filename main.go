@@ -208,7 +208,7 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 			line := scanner.Text()
 
 			if c.ParseInto == nil {
-				logger.Info(line)
+				logger.Info("", zap.String("log", line))
 				continue
 			}
 
@@ -222,7 +222,7 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 				continue
 			}
 
-			fields := make([]zapcore.Field, 0, len(logFields)+1)
+			fields := make([]zapcore.Field, 0, len(logFields)+2)
 			if !topLevel {
 				fields = append(fields, zap.Namespace(*c.ParseInto))
 			}
@@ -230,7 +230,12 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 			for k, v := range logFields {
 				fields = append(fields, zap.Any(k, v))
 			}
-			logger.Info(line, fields...)
+
+			if *c.ParseInto != "log" {
+				fields = append(fields, zap.String("log", line))
+			}
+
+			logger.Info("", fields...)
 
 		}
 	}()
@@ -269,7 +274,6 @@ type procConfig struct {
 func newLogger() (*zap.Logger, error) {
 	encConfig := zapcore.EncoderConfig{
 		TimeKey:    "time",
-		MessageKey: "log",
 		NameKey:    "process",
 		LineEnding: zapcore.DefaultLineEnding,
 		EncodeTime: rfc3339NanoTimeEncoder,
@@ -317,11 +321,10 @@ func signalHandlingContext() context.Context {
 // based on https://github.com/ramr/go-reaper
 // MIT License 2015 ramr
 func reapChildren() {
+	// wait4 blocks, so buffer the channel
 	var notifications = make(chan os.Signal, 1)
 
 	go sigChildHandler(notifications)
-
-	//pid := os.Getpid()
 
 	for {
 		<-notifications
@@ -344,6 +347,7 @@ func reapChildren() {
 }
 
 func sigChildHandler(notifications chan os.Signal) {
+	// unsure why go-reaper chose 3 here
 	var sigs = make(chan os.Signal, 3)
 	signal.Notify(sigs, syscall.SIGCHLD)
 

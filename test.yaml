@@ -7,4 +7,4 @@ processes:
     command: 'yes'
     arguments: 
       - '{"foo": "bar"}'
-    parse_into: ""
+    parse_into: "log"
