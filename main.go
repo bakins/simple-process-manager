@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -55,8 +57,6 @@ func main() {
 
 	errors := make(chan error, len(cfg.Procs))
 
-	var commands []*exec.Cmd
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	for _, p := range cfg.Procs {
@@ -65,12 +65,13 @@ func main() {
 		cmd := exec.CommandContext(ctx, p.Command, p.Arguments...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-		stdout, stderr := collector.add(ctx, &p)
+		stdout, stderr := collector.add(ctx, p)
 
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
 
-		commands = append(commands, cmd)
+		p.cmd = cmd
+
 		go func() {
 			if err := cmd.Start(); err != nil {
 				errors <- err
@@ -88,18 +89,25 @@ func main() {
 	// any of these conditions signal an exit
 	select {
 	case <-errors:
-	// Log error?
+	// Log error? could be nil on normal exit
 	case <-ctx.Done():
+	// this should never be done until later, but check just in case
 	case <-signals.Done():
 	}
 
-	done := signalCommands(syscall.SIGTERM, commands)
+	gracePeriod := cfg.GracePeriod
+	if gracePeriod == time.Duration(0) {
+		gracePeriod = time.Second * 10
+	}
 
-	t := time.NewTimer(time.Second * 10)
+	timeout, timeoutCancel := context.WithTimeout(ctx, gracePeriod)
+
+	defer timeoutCancel()
+	done := signalCommands(timeout, cfg.Procs)
 
 	select {
 	case <-done:
-	case <-t.C:
+	case <-timeout.Done():
 	}
 
 	// will send sigkill to processes
@@ -107,36 +115,52 @@ func main() {
 	cancel()
 }
 
-func signalCommands(sig syscall.Signal, commands []*exec.Cmd) <-chan struct{} {
+func signalCommands(ctx context.Context, procs []*procConfig) <-chan struct{} {
 	done := make(chan struct{})
 
 	var wg sync.WaitGroup
 
-	for _, cmd := range commands {
-		cmd := cmd
+	for _, p := range procs {
+		p := p
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			if cmd.Process == nil {
+			if p.cmd.Process == nil {
 				return
 			}
 
-			// should we log any error we get here?
-			cmd.Process.Signal(sig)
+			// process group should be the same as the pid since we set Setpgid
+			// but check just to be sure
+
+			pid := p.cmd.Process.Pid
+			gid, err := syscall.Getpgid(pid)
+			if err != nil {
+				// log error?
+			} else {
+				pid = -1 * gid
+			}
+
+			sig := syscall.Signal(p.Signal)
+			if sig == syscall.Signal(0) {
+				sig = syscall.SIGTERM
+			}
+
+			if err := syscall.Kill(pid, sig); err != nil {
+				// log error?
+			}
 
 			t := time.NewTicker(time.Millisecond * 100)
 			defer t.Stop()
-			for {
-				<-t.C
-				if cmd.ProcessState == nil {
-					return
-				}
+			select {
 
-				if !processIsRunning(cmd) {
+			case <-t.C:
+				if !processIsRunning(p.cmd) {
 					return
 				}
+			case <-ctx.Done():
+				return
 			}
 		}()
 	}
@@ -261,14 +285,17 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 }
 
 type config struct {
-	Procs []procConfig `yaml:"processes"`
+	GracePeriod time.Duration `yaml:"grace_period"`
+	Procs       []*procConfig `yaml:"processes"`
 }
 
 type procConfig struct {
-	Name      string   `yaml:"name"`
-	Command   string   `yaml:"command"`
-	Arguments []string `yaml:"arguments"`
-	ParseInto *string  `yaml:"parse_into"`
+	Name      string     `yaml:"name"`
+	Command   string     `yaml:"command"`
+	Arguments []string   `yaml:"arguments"`
+	ParseInto *string    `yaml:"parse_into"`
+	Signal    confSignal `yaml:"signal"`
+	cmd       *exec.Cmd
 }
 
 func newLogger() (*zap.Logger, error) {
@@ -358,4 +385,32 @@ func sigChildHandler(notifications chan os.Signal) {
 		default:
 		}
 	}
+}
+
+type confSignal syscall.Signal
+
+func (s *confSignal) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var v string
+	if err := unmarshal(&v); err != nil {
+		return err
+	}
+
+	sig := syscall.SIGTERM
+	switch strings.ToUpper(v) {
+	case "", "TERM":
+		sig = syscall.SIGTERM
+	case "INT":
+		sig = syscall.SIGINT
+	case "QUIT":
+		sig = syscall.SIGQUIT
+	case "USR1":
+		sig = syscall.SIGUSR1
+	case "USR2":
+		sig = syscall.SIGUSR1
+	default:
+		return fmt.Errorf("unsupported or uknown signal: %s", v)
+	}
+
+	*s = confSignal(sig)
+	return nil
 }

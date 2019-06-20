@@ -8,3 +8,4 @@ processes:
     arguments: 
       - '{"foo": "bar"}'
     parse_into: "log"
+    signal: INT

@@ -14,9 +14,16 @@ require (
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/pkg/errors v0.8.1
 	github.com/ramr/go-reaper v0.0.0-20170814234526-35f6a64e44ff
-	github.com/stretchr/testify v1.3.0 // indirect
+	github.com/stretchr/objx v0.2.0 // indirect
 	go.uber.org/atomic v1.4.0 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
 	go.uber.org/zap v1.10.0
+	golang.org/x/crypto v0.0.0-20190617133340-57b3e21c3d56 // indirect
+	golang.org/x/net v0.0.0-20190613194153-d28f0bde5980 // indirect
 	golang.org/x/sync v0.0.0-20190423024810-112230192c58
+	golang.org/x/sys v0.0.0-20190616124812-15dcb6c0061f // indirect
+	golang.org/x/text v0.3.2 // indirect
+	golang.org/x/tools v0.0.0-20190617190820-da514acc4774 // indirect
+	k8s.io/klog v0.3.3 // indirect
+	k8s.io/utils v0.0.0-20190607212802-c55fbcfc754a
 )
