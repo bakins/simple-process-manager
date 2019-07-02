@@ -1,5 +1,6 @@
 builds:
-- env:
+- binary: spm
+  env:
   - CGO_ENABLED=0
   goos:
   - linux
