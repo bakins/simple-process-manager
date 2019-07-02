@@ -10,3 +10,4 @@ processes:
       - '{"foo": "bar"}'
     parse_into: ""
     signal: INT
+

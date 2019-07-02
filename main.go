@@ -253,16 +253,17 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 			}
 
 			fields := make([]zapcore.Field, 0, len(logFields)+2)
+
+			if *c.ParseInto != "log" {
+				fields = append(fields, zap.String("log", line))
+			}
+
 			if !topLevel {
 				fields = append(fields, zap.Namespace(*c.ParseInto))
 			}
 
 			for k, v := range logFields {
 				fields = append(fields, zap.Any(k, v))
-			}
-
-			if *c.ParseInto != "log" {
-				fields = append(fields, zap.String("log", line))
 			}
 
 			logger.Info("", fields...)
