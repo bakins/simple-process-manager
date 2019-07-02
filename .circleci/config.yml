@@ -19,6 +19,8 @@ workflows:
   test_and_release:
     jobs:
       - test
+          tags:
+            only: /.*/
       - release:
           requires:
           - test
