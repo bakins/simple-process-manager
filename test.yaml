@@ -1,3 +1,4 @@
+grace_period: 1s
 processes:
   - name: first
     command: sleep
@@ -7,5 +8,5 @@ processes:
     command: 'yes'
     arguments: 
       - '{"foo": "bar"}'
-    parse_into: "log"
+    parse_into: ""
     signal: INT

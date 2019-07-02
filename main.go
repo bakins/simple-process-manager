@@ -25,7 +25,7 @@ import (
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 func main() {
-	configFile := kingpin.Arg("config", "config file").Default("./config.yaml").ExistingFile()
+	configFile := kingpin.Arg("config", "config file").Default("./config.yaml").String()
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
 
@@ -34,21 +34,26 @@ func main() {
 		panic(err)
 	}
 
+	mgrLog := logger.With(zap.String("process", "manager"))
+
 	data, err := ioutil.ReadFile(*configFile)
 	if err != nil {
-		logger.Fatal("failed to read config file", zap.String("filename", *configFile), zap.Error(err))
+		mgrLog.Fatal("",
+			zap.String("log", "failed to read config file"), zap.String("filename", *configFile), zap.Error(err))
 	}
 
 	var cfg config
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		logger.Fatal("failed to read parse file", zap.String("filename", *configFile), zap.Error(err))
+		mgrLog.Fatal("",
+			zap.String("log", "failed to read parse file"), zap.String("filename", *configFile), zap.Error(err))
 	}
 
 	go reapChildren()
 
 	collector := &logCollector{
 		logger: logger,
+		mgrLog: mgrLog,
 	}
 
 	// we use a separate context for signals so that we can control
@@ -73,22 +78,17 @@ func main() {
 		p.cmd = cmd
 
 		go func() {
-			if err := cmd.Start(); err != nil {
-				errors <- err
-				return
-			}
-
-			if err := cmd.Wait(); err != nil {
-				errors <- err
-				return
-			}
-			errors <- nil
+			errors <- cmd.Run()
 		}()
 	}
 
 	// any of these conditions signal an exit
 	select {
-	case <-errors:
+	case err := <-errors:
+		if err != nil {
+			mgrLog.Error("",
+				zap.String("log", "process exited unexpectedly"), zap.Error(err))
+		}
 	// Log error? could be nil on normal exit
 	case <-ctx.Done():
 	// this should never be done until later, but check just in case
@@ -103,7 +103,7 @@ func main() {
 	timeout, timeoutCancel := context.WithTimeout(ctx, gracePeriod)
 
 	defer timeoutCancel()
-	done := signalCommands(timeout, cfg.Procs)
+	done := signalCommands(timeout, cfg.Procs, mgrLog)
 
 	select {
 	case <-done:
@@ -115,7 +115,7 @@ func main() {
 	cancel()
 }
 
-func signalCommands(ctx context.Context, procs []*procConfig) <-chan struct{} {
+func signalCommands(ctx context.Context, procs []*procConfig, logger *zap.Logger) <-chan struct{} {
 	done := make(chan struct{})
 
 	var wg sync.WaitGroup
@@ -137,8 +137,11 @@ func signalCommands(ctx context.Context, procs []*procConfig) <-chan struct{} {
 			pid := p.cmd.Process.Pid
 			gid, err := syscall.Getpgid(pid)
 			if err != nil {
-				// log error?
+				logger.Error("",
+					zap.String("log", "failed to get process group"),
+					zap.Int("pid", pid), zap.String("child", p.Name))
 			} else {
+				// signal all processes in group
 				pid = -1 * gid
 			}
 
@@ -148,7 +151,9 @@ func signalCommands(ctx context.Context, procs []*procConfig) <-chan struct{} {
 			}
 
 			if err := syscall.Kill(pid, sig); err != nil {
-				// log error?
+				logger.Error("",
+					zap.String("log", "failed to signal process"),
+					zap.Int("pid", pid), zap.String("child", p.Name), zap.Stringer("signal", sig))
 			}
 
 			t := time.NewTicker(time.Millisecond * 100)
@@ -194,6 +199,7 @@ func processIsRunning(cmd *exec.Cmd) bool {
 type logCollector struct {
 	sync.Mutex
 	logger *zap.Logger
+	mgrLog *zap.Logger
 	sinks  []*logSink
 }
 
@@ -238,10 +244,10 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 
 			var logFields map[string]interface{}
 			if err := json.Unmarshal([]byte(line), &logFields); err != nil {
-				l.logger.Error("failed to unmarshal log line",
+				l.mgrLog.Error("",
+					zap.String("log", "failed to unmarshal log line"),
 					zap.String("child", s.name),
 					zap.String("line", line),
-					zap.String("process", "manager"),
 				)
 				continue
 			}
@@ -262,6 +268,13 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 			logger.Info("", fields...)
 
 		}
+		if err := scanner.Err(); err != nil {
+			l.mgrLog.Error("",
+				zap.String("log", "error scanning output"),
+				zap.String("process", s.name),
+				zap.String("stream", "stderr"),
+			)
+		}
 	}()
 
 	go func() {
@@ -274,7 +287,13 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 			line := scanner.Text()
 			logger.Info(line)
 		}
-		// do we care about scanner error?
+		if err := scanner.Err(); err != nil {
+			l.mgrLog.Error("",
+				zap.String("log", "error scanning output"),
+				zap.String("process", s.name),
+				zap.String("stream", "stderr"),
+			)
+		}
 	}()
 
 	l.Lock()
