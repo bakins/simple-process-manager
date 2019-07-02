@@ -16,14 +16,12 @@ jobs:
       - run: ./script/release
 workflows:
   version: 2
-  test_and_release:
+  test:
     jobs:
       - test
-          tags:
-            only: /.*/
+  release:
+    jobs:
       - release:
-          requires:
-          - test
           filters:
             branches:
               ignore: /.*/
