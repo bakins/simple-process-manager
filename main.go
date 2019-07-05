@@ -139,7 +139,10 @@ func signalCommands(ctx context.Context, procs []*procConfig, logger *zap.Logger
 			if err != nil {
 				logger.Error("",
 					zap.String("log", "failed to get process group"),
-					zap.Int("pid", pid), zap.String("child", p.Name))
+					zap.Int("pid", pid),
+					zap.String("child", p.Name),
+					zap.Error(err),
+				)
 			} else {
 				// signal all processes in group
 				pid = -1 * gid
@@ -153,7 +156,11 @@ func signalCommands(ctx context.Context, procs []*procConfig, logger *zap.Logger
 			if err := syscall.Kill(pid, sig); err != nil {
 				logger.Error("",
 					zap.String("log", "failed to signal process"),
-					zap.Int("pid", pid), zap.String("child", p.Name), zap.Stringer("signal", sig))
+					zap.Int("pid", pid),
+					zap.String("child", p.Name),
+					zap.Stringer("signal", sig),
+					zap.Error(err),
+				)
 			}
 
 			t := time.NewTicker(time.Millisecond * 100)
@@ -248,6 +255,7 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 					zap.String("log", "failed to unmarshal log line"),
 					zap.String("child", s.name),
 					zap.String("line", line),
+					zap.Error(err),
 				)
 				continue
 			}
@@ -274,6 +282,7 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 				zap.String("log", "error scanning output"),
 				zap.String("process", s.name),
 				zap.String("stream", "stderr"),
+				zap.Error(err),
 			)
 		}
 	}()
@@ -286,13 +295,14 @@ func (l *logCollector) add(ctx context.Context, c *procConfig) (io.Writer, io.Wr
 		scanner := bufio.NewScanner(s.stderrReader)
 		for scanner.Scan() {
 			line := scanner.Text()
-			logger.Info(line)
+			logger.Info("", zap.String("log", line))
 		}
 		if err := scanner.Err(); err != nil {
 			l.mgrLog.Error("",
 				zap.String("log", "error scanning output"),
 				zap.String("process", s.name),
 				zap.String("stream", "stderr"),
+				zap.Error(err),
 			)
 		}
 	}()
